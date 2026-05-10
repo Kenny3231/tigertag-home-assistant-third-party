@@ -2,26 +2,37 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connexion TigerTag",
-        "description": "Entrez vos identifiants TigerTag. Retrouvez votre clé API dans l'application TigerTag Studio.",
+        "title": "TigerTag — Authentification",
+        "description": "Choisissez votre mode de connexion Firebase.",
         "data": {
-          "email": "Adresse e-mail",
-          "api_key": "Clé API"
+          "auth_mode": "Mode d'authentification"
         }
       },
-      "locations": {
-        "title": "Lieux de stockage",
-        "description": "Définissez vos lieux de stockage séparés par des virgules (ex: {example}).",
+      "password": {
+        "title": "TigerTag — Email / Mot de passe",
+        "description": "Saisissez vos identifiants TigerTag.",
         "data": {
-          "locations_raw": "Lieux de stockage"
+          "email": "Adresse e-mail",
+          "password": "Mot de passe"
+        }
+      },
+      "token": {
+        "title": "TigerTag — Token",
+        "description": "Collez le refresh token Firebase de l'application [TigerTag-Token 1.0.0.exe](https://github.com/Kenny3231/TigerTag) sur le github.",
+        "data": {
+          "refresh_token": "Token",
+          "email": "Adresse e-mail (optionnel)"
+        },
+        "data_description": {
+          "email": "Laissez vide pour utiliser l'identifiant Firebase comme nom."
         }
       }
     },
     "error": {
-      "invalid_auth": "Clé API ou adresse e-mail invalide.",
-      "cannot_connect": "Impossible de se connecter à l'API TigerTag.",
-      "no_locations": "Veuillez définir au moins un lieu de stockage.",
-      "unknown": "Erreur inconnue. Consultez les journaux pour plus de détails."
+      "invalid_auth": "Email ou mot de passe invalide.",
+      "invalid_token": "Token invalide ou expiré — obtenez-en un nouveau depuis l'application.",
+      "cannot_connect": "Impossible de se connecter à Firebase. Vérifiez votre connexion.",
+      "unknown": "Erreur inconnue. Consultez les journaux Home Assistant."
     },
     "abort": {
       "already_configured": "Ce compte TigerTag est déjà configuré."
@@ -30,21 +41,16 @@
   "options": {
     "step": {
       "init": {
-        "title": "Modifier les lieux de stockage",
-        "description": "Modifiez vos lieux de stockage séparés par des virgules (ex: {example}).",
-        "data": {
-          "locations_raw": "Lieux de stockage"
-        }
+        "title": "Options TigerTag",
+        "description": "Aucune option disponible pour l'instant."
       }
-    },
-    "error": {
-      "no_locations": "Veuillez définir au moins un lieu de stockage."
     }
   },
-  "entity": {
-    "sensor": {
-      "tigertag_stats": {
-        "name": "Statistiques TigerTag"
+  "selector": {
+    "auth_mode": {
+      "options": {
+        "password": "Email / Mot de passe",
+        "token": "Token"
       }
     }
   }

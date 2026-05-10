@@ -2,26 +2,37 @@
   "config": {
     "step": {
       "user": {
-        "title": "TigerTag Verbindung",
-        "description": "Gib deine TigerTag-Anmeldedaten ein. Den API-Schlüssel findest du in der TigerTag Studio App.",
+        "title": "TigerTag — Authentifizierung",
+        "description": "Wählen Sie Ihre Firebase-Authentifizierungsmethode.",
         "data": {
-          "email": "E-Mail-Adresse",
-          "api_key": "API-Schlüssel"
+          "auth_mode": "Authentifizierungsmodus"
         }
       },
-      "locations": {
-        "title": "Lagerorte",
-        "description": "Definiere deine Lagerorte durch Kommas getrennt (z.B. {example}).",
+      "password": {
+        "title": "TigerTag — E-Mail / Passwort",
+        "description": "Geben Sie Ihre TigerTag-Zugangsdaten ein.",
         "data": {
-          "locations_raw": "Lagerorte"
+          "email": "E-Mail-Adresse",
+          "password": "Passwort"
+        }
+      },
+      "token": {
+        "title": "TigerTag — Firebase-Token",
+        "description": "Fügen Sie den Firebase Refresh-Token aus der [TigerTag-Token 1.0.0.exe](https://github.com/Kenny3231/TigerTag) App ein.",
+        "data": {
+          "email": "E-Mail-Adresse (optional)",
+          "refresh_token": "Token"
+        },
+        "data_description": {
+          "email": "Leer lassen, um die Firebase-UID als Kontonamen zu verwenden."
         }
       }
     },
     "error": {
-      "invalid_auth": "Ungültiger API-Schlüssel oder E-Mail-Adresse.",
-      "cannot_connect": "Verbindung zur TigerTag API fehlgeschlagen.",
-      "no_locations": "Bitte definiere mindestens einen Lagerort.",
-      "unknown": "Unbekannter Fehler. Überprüfe die Protokolle für weitere Details."
+      "invalid_auth": "Ungültige E-Mail oder Passwort.",
+      "invalid_token": "Ungültiger oder abgelaufener Token.",
+      "cannot_connect": "Verbindung zu Firebase nicht möglich.",
+      "unknown": "Unbekannter Fehler. Bitte Protokolle prüfen."
     },
     "abort": {
       "already_configured": "Dieses TigerTag-Konto ist bereits konfiguriert."
@@ -30,15 +41,17 @@
   "options": {
     "step": {
       "init": {
-        "title": "Lagerorte bearbeiten",
-        "description": "Bearbeite deine Lagerorte durch Kommas getrennt (z.B. {example}).",
-        "data": {
-          "locations_raw": "Lagerorte"
-        }
+        "title": "TigerTag-Optionen",
+        "description": "Noch keine Optionen verfügbar."
       }
-    },
-    "error": {
-      "no_locations": "Bitte definiere mindestens einen Lagerort."
+    }
+  },
+  "selector": {
+    "auth_mode": {
+      "options": {
+        "password": "E-Mail / Passwort",
+        "token": "Token (aus der App)"
+      }
     }
   }
 }

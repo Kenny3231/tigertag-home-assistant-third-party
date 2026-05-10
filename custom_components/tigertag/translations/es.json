@@ -2,26 +2,37 @@
   "config": {
     "step": {
       "user": {
-        "title": "Conexión TigerTag",
-        "description": "Introduce tus credenciales de TigerTag. Encuentra tu clave API en la aplicación TigerTag Studio.",
+        "title": "TigerTag — Autenticación",
+        "description": "Elija su método de autenticación de Firebase.",
         "data": {
-          "email": "Correo electrónico",
-          "api_key": "Clave API"
+          "auth_mode": "Modo de autenticación"
         }
       },
-      "locations": {
-        "title": "Lugares de almacenamiento",
-        "description": "Define tus lugares de almacenamiento separados por comas (ej: {example}).",
+      "password": {
+        "title": "TigerTag — Correo / Contraseña",
+        "description": "Introduzca sus credenciales de TigerTag.",
         "data": {
-          "locations_raw": "Lugares de almacenamiento"
+          "email": "Correo electrónico",
+          "password": "Contraseña"
+        }
+      },
+      "token": {
+        "title": "TigerTag — Token de Firebase",
+        "description": "Pegue el token de la aplicación [TigerTag-Token 1.0.0.exe](https://github.com/Kenny3231/TigerTag) en GitHub.",
+        "data": {
+          "email": "Correo electrónico (opcional)",
+          "refresh_token": "Token"
+        },
+        "data_description": {
+          "email": "Déjelo vacío para usar el UID de Firebase como nombre."
         }
       }
     },
     "error": {
-      "invalid_auth": "Clave API o dirección de correo electrónico inválida.",
-      "cannot_connect": "No se puede conectar a la API de TigerTag.",
-      "no_locations": "Por favor, define al menos un lugar de almacenamiento.",
-      "unknown": "Error desconocido. Consulta los registros para más detalles."
+      "invalid_auth": "Correo o contraseña incorrectos.",
+      "invalid_token": "Token inválido o expirado.",
+      "cannot_connect": "No se puede conectar a Firebase.",
+      "unknown": "Error desconocido. Revise los registros."
     },
     "abort": {
       "already_configured": "Esta cuenta TigerTag ya está configurada."
@@ -30,21 +41,16 @@
   "options": {
     "step": {
       "init": {
-        "title": "Editar lugares de almacenamiento",
-        "description": "Edita tus lugares de almacenamiento separados por comas (ej: {example}).",
-        "data": {
-          "locations_raw": "Lugares de almacenamiento"
-        }
+        "title": "Opciones de TigerTag",
+        "description": "No hay opciones disponibles."
       }
-    },
-    "error": {
-      "no_locations": "Por favor, define al menos un lugar de almacenamiento."
     }
   },
-  "entity": {
-    "sensor": {
-      "tigertag_stats": {
-        "name": "Estadísticas TigerTag"
+  "selector": {
+    "auth_mode": {
+      "options": {
+        "password": "Correo / Contraseña",
+        "token": "Token (desde la app)"
       }
     }
   }

@@ -310,6 +310,7 @@ class TigerTagCard extends HTMLElement {
     this._refreshing  = false;
     this._domGrid = this._domOverlay = this._domPanel = this._domFilters = null;
     this._viewMode = 'grid';   // sera mis à jour par setConfig
+    this._dataHash = null;     // hash des données pour éviter les re-renders inutiles
     this._sortCol  = 'name';   // colonne de tri courante
     this._sortDir  = 1;        // 1=asc -1=desc
     this._domTable = null;
@@ -325,8 +326,34 @@ class TigerTagCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._initialized) { this._initDOM(); this._initialized = true; }
-    this._renderGrid();
+
+    // Ne re-render la grille que si les données ont réellement changé.
+    // HA appelle set hass très fréquemment (toutes les secondes) — sans ce
+    // garde-fou, chaque update détruit et recrée le DOM, perdant le hover
+    // et causant un clignotement permanent.
+    const hash = this._computeDataHash();
+    if (hash !== this._dataHash) {
+      this._dataHash = hash;
+      this._renderGrid();
+    }
+
     if (this._selected) this._syncPanelWeight();
+  }
+
+  _computeDataHash() {
+    if (!this._hass) return null;
+    const states = this._hass.states;
+    let h = "";
+    for (const [id, s] of Object.entries(states)) {
+      if (id.startsWith("sensor.tigertag_")) {
+        h += id + ":" + s.last_changed + ":" + s.state + "|";
+      }
+    }
+    // Inclure les racks dans le hash — ils viennent du StatsSensor
+    // et peuvent charger après les sensors bobines
+    const racks = this._getRacks();
+    h += "racks:" + Object.keys(racks).sort().join(",");
+    return h;
   }
 
   /* ── Détection Bambu Lab ─────────────────────────────────────────────── */
@@ -590,14 +617,16 @@ class TigerTagCard extends HTMLElement {
       tare:         parseFloat(tare) || 0,
       tare_official:parseFloat(a.container_weight) || 0,
       tare_custom:  a.container_weight_custom != null ? parseFloat(a.container_weight_custom) : null,
-      ams_entity:   a.ams_location || null,   // entity_id du tray Bambu
+      // Firebase prioritaire : rack_id et ams_entity sont mutuellement exclusifs
+      // Si rack_id présent dans Firestore → la bobine N'est PAS dans un AMS
+      ams_entity:   (a.rack_id ? null : (a.ams_location || null)),
       rack_id:              a.rack_id || null,
-      rack_name:            a.rack_name || null,
+      rack_name:            a.rack_id ? (this._getRacks()[a.rack_id]?.name || a.rack_id) : null,
       rack_level:           a.rack_level ?? null,
       rack_position:        a.rack_position ?? null,
-      rack_level_count:     a.rack_level_count ?? null,
-      rack_position_count:  a.rack_position_count ?? null,
-      rack_order:           a.rack_order ?? null,
+      rack_level_count:     a.rack_id ? (this._getRacks()[a.rack_id]?.level_count ?? null) : null,
+      rack_position_count:  a.rack_id ? (this._getRacks()[a.rack_id]?.position_count ?? null) : null,
+      rack_order:           a.rack_id ? (this._getRacks()[a.rack_id]?.order ?? null) : null,
       nozzle_min:   a.nozzle_temp_min || null,
       nozzle_max:   a.nozzle_temp_max || null,
       bed_min:      a.bed_temp_min || null,
@@ -689,19 +718,60 @@ class TigerTagCard extends HTMLElement {
     const thr    = 250;
 
     if (this._viewMode === 'table') {
-      this._domGrid.parentElement.style.display  = "none";
+      this._domGrid.parentElement.style.display = "none";
       this._domTable.style.display = "";
       this._renderTable(spools, thr);
-    } else {
-      this._domGrid.parentElement.style.display  = "";
-      this._domTable.style.display = "none";
-      this._domGrid.innerHTML = "";
-      if (!spools.length) {
-        this._domGrid.innerHTML = `<div class="tt-empty">Aucune bobine trouvée</div>`;
-        return;
-      }
-      spools.forEach(s => this._domGrid.appendChild(this._spoolCard(s, thr)));
+      return;
     }
+
+    this._domGrid.parentElement.style.display = "";
+    this._domTable.style.display = "none";
+
+    if (!spools.length) {
+      this._domGrid.innerHTML = `<div class="tt-empty">Aucune bobine trouvée</div>`;
+      return;
+    }
+
+    // Mise à jour différentielle : on ne recrée une carte que si son uid
+    // ou son état a changé. Cela préserve le hover et évite le clignotement.
+    const existing = new Map();
+    for (const el of this._domGrid.children) {
+      const uid = el.dataset.uid;
+      if (uid) existing.set(uid, el);
+    }
+
+    const newUids = new Set(spools.map(s => s.uid));
+
+    // Supprimer les cartes dont la bobine n'est plus dans la liste filtrée
+    for (const [uid, el] of existing) {
+      if (!newUids.has(uid)) { this._domGrid.removeChild(el); existing.delete(uid); }
+    }
+
+    // Insérer ou mettre à jour chaque carte dans le bon ordre
+    spools.forEach((s, idx) => {
+      const cardHash = s.uid + ":" + s.weight + ":" + (s.rack_id||"") + ":" + (s.rack_level??"") + ":" + (s.rack_position??"") + ":" + (s.ams_entity||"");
+      const el = existing.get(s.uid);
+      if (!el) {
+        // Nouvelle bobine → créer la carte
+        const newEl = this._spoolCard(s, thr);
+        newEl.dataset.uid      = s.uid;
+        newEl.dataset.cardHash = cardHash;
+        const ref = this._domGrid.children[idx];
+        if (ref) this._domGrid.insertBefore(newEl, ref);
+        else      this._domGrid.appendChild(newEl);
+      } else {
+        // Carte existante → repositionner si nécessaire, mettre à jour si contenu changé
+        const ref = this._domGrid.children[idx];
+        if (ref !== el) this._domGrid.insertBefore(el, ref || null);
+        if (el.dataset.cardHash !== cardHash) {
+          // Contenu changé : remplacer uniquement cette carte
+          const newEl = this._spoolCard(s, thr);
+          newEl.dataset.uid      = s.uid;
+          newEl.dataset.cardHash = cardHash;
+          this._domGrid.replaceChild(newEl, el);
+        }
+      }
+    });
   }
 
   /* ── Vue Tableau ─────────────────────────────────────────────────────── */
@@ -974,6 +1044,7 @@ class TigerTagCard extends HTMLElement {
     const card = document.createElement("div");
     card.className = "tt-spool" + (isSel ? " selected" : "") + (isLow ? " low-stock" : "");
     card.dataset.eid = s.entity_id;
+    card.dataset.uid = s.uid;   // nécessaire pour la mise à jour différentielle
 
     const imgWrap = document.createElement("div");
     imgWrap.className = "tt-spool-img-wrap";
@@ -1421,22 +1492,56 @@ class TigerTagCard extends HTMLElement {
       if (level    !== undefined && level    !== null) data.level    = level;
       if (position !== undefined && position !== null) data.position = position;
       await this._hass.callService("tigertag", "set_spool_rack", data);
+
+      // ── Éjecter l'occupant actuel du slot si conflit ──────────────────
+      if (rackId && level !== null && position !== null) {
+        const occupant = this._getSlotOccupant(rackId, level, position, s.uid);
+        if (occupant) {
+          // Retirer l'occupant localement (le service Python le fait aussi côté Firestore)
+          occupant.rack_id       = null;
+          occupant.rack_name     = null;
+          occupant.rack_level    = null;
+          occupant.rack_position = null;
+          this._refreshSpoolCard(occupant);
+          // Si le twin de l'occupant est aussi dans la grille
+          if (occupant.twin_uid) {
+            const twin = this._allSpools().find(x => x.uid === occupant.twin_uid);
+            if (twin) {
+              twin.rack_id = null; twin.rack_name = null;
+              twin.rack_level = null; twin.rack_position = null;
+              this._refreshSpoolCard(twin);
+            }
+          }
+        }
+      }
+
+      // ── Mettre à jour la bobine courante ──────────────────────────────
       s.rack_id       = rackId || null;
       s.rack_name     = rackId ? this._getRackName(rackId) : null;
       s.rack_level    = level    ?? null;
       s.rack_position = position ?? null;
-      // Le service Python efface automatiquement la location AMS quand rack_id est fourni
-      // On met à jour l'objet local pour que l'UI reflète immédiatement le changement
-      if (rackId && s.ams_entity) {
-        s.ams_entity = null;
+      // Assigner rack → effacer AMS (règle métier)
+      if (rackId && s.ams_entity) s.ams_entity = null;
+      // Propagation twin
+      if (s.twin_uid) {
+        const twin = this._allSpools().find(x => x.uid === s.twin_uid);
+        if (twin) {
+          twin.rack_id = s.rack_id; twin.rack_name = s.rack_name;
+          twin.rack_level = s.rack_level; twin.rack_position = s.rack_position;
+          twin.ams_entity = s.ams_entity;
+          this._refreshSpoolCard(twin);
+        }
       }
+
       this._refreshPanelTags(s);
+      this._refreshSpoolCard(s);
     } catch(e) { console.error("[TigerTagCard] setRack:", e); }
   }
 
   async _setAms(s, entityId) {
     const newAms = entityId === "—" ? null : entityId;
     if (!this._hass) return;
+
     if (newAms) {
       const data = { uid: s.uid, tray_entity_id: newAms };
       if (this._amsState?.profile?.tray_info_idx) {
@@ -1444,24 +1549,55 @@ class TigerTagCard extends HTMLElement {
         data.profile_name  = this._amsState.profile.name;
       }
       try {
+        // Éjecter l'occupant actuel de ce slot AMS
+        const amsOccupant = this._allSpools().find(
+          sp => sp.ams_entity === newAms && sp.uid !== s.uid && sp.uid !== s.twin_uid
+        );
+        if (amsOccupant) {
+          amsOccupant.ams_entity = null;
+          this._refreshSpoolCard(amsOccupant);
+          if (amsOccupant.twin_uid) {
+            const ot = this._allSpools().find(x => x.uid === amsOccupant.twin_uid);
+            if (ot) { ot.ams_entity = null; this._refreshSpoolCard(ot); }
+          }
+        }
+
         await this._hass.callService("tigertag", "set_bambu_ams_filament", data);
         s.ams_entity = newAms;
-        // Retirer du rack si la bobine y était placée
+
+        // Assigner AMS → effacer rack (règle métier)
         if (s.rack_id) {
           await this._hass.callService("tigertag", "set_spool_rack", { uid: s.uid, rack_id: null });
-          s.rack_id       = null;
-          s.rack_name     = null;
-          s.rack_level    = null;
-          s.rack_position = null;
+          s.rack_id = null; s.rack_name = null;
+          s.rack_level = null; s.rack_position = null;
         }
+
+        // Propagation twin
+        if (s.twin_uid) {
+          const twin = this._allSpools().find(x => x.uid === s.twin_uid);
+          if (twin) {
+            twin.ams_entity = s.ams_entity;
+            twin.rack_id = null; twin.rack_name = null;
+            twin.rack_level = null; twin.rack_position = null;
+            this._refreshSpoolCard(twin);
+          }
+        }
+
         this._refreshPanelTags(s);
+        this._refreshSpoolCard(s);
         this._refreshEmplacementTab(s);
       } catch(e) { console.error("[TigerTagCard] setAms:", e); }
+
     } else {
       try {
         await this._hass.callService("tigertag", "set_spool_rack", { uid: s.uid, rack_id: null });
         s.ams_entity = null;
+        if (s.twin_uid) {
+          const twin = this._allSpools().find(x => x.uid === s.twin_uid);
+          if (twin) { twin.ams_entity = null; this._refreshSpoolCard(twin); }
+        }
         this._refreshPanelTags(s);
+        this._refreshSpoolCard(s);
         this._refreshEmplacementTab(s);
       } catch(e) { console.error("[TigerTagCard] removeAms:", e); }
     }
@@ -1516,6 +1652,41 @@ class TigerTagCard extends HTMLElement {
         }
       }
     });
+  }
+
+  // Retourne la bobine occupant le slot (rackId, level, position), ou null
+  // Exclut la bobine s elle-même (et son twin) pour éviter les faux positifs
+  _getSlotOccupant(rackId, level, position, excludeUid = null) {
+    if (!rackId || level === null || position === null) return null;
+    const spools = this._allSpools();
+    for (const sp of spools) {
+      if (sp.rack_id !== rackId) continue;
+      if (sp.rack_level !== level || sp.rack_position !== position) continue;
+      if (excludeUid && (sp.uid === excludeUid || sp.uid === this._getTwinUid(excludeUid))) continue;
+      return sp;
+    }
+    return null;
+  }
+
+  // Retourne le twin_tag_uid d'une bobine depuis _allSpools
+  _getTwinUid(uid) {
+    const sp = this._allSpools().find(s => s.uid === uid);
+    return sp?.twin_uid || null;
+  }
+
+  // Force la mise à jour de la carte grille d'une bobine spécifique
+  // sans recréer toute la grille — appelé après une action locale (_setRack, _setAms)
+  _refreshSpoolCard(s) {
+    if (!this._domGrid) return;
+    const el = this._domGrid.querySelector(`[data-uid="${s.uid}"]`);
+    if (!el) return;
+    const thr     = 250;
+    const newEl   = this._spoolCard(s, thr);
+    const newHash = s.uid + ":" + (s.weight||0) + ":" + (s.rack_id||"") + ":" + (s.rack_level??"") + ":" + (s.rack_position??"") + ":" + (s.ams_entity||"");
+    newEl.dataset.uid      = s.uid;
+    newEl.dataset.cardHash = newHash;
+    el.dataset.cardHash    = newHash; // mettre à jour le hash de l'ancien aussi
+    this._domGrid.replaceChild(newEl, el);
   }
 
   _refreshPanelTags(s) {
@@ -1625,7 +1796,11 @@ class TigerTagCard extends HTMLElement {
     rackPosRow.appendChild(posWrap);
     rackSec.appendChild(rackPosRow);
 
+    // Déclaré ici pour être accessible depuis fillRackPos (avant la def du bouton)
+    let _refreshAssignBtn = () => {};
+
     // Remplit les sélecteurs étage/position selon le rack choisi
+    // Avec indicateur vert (libre) / rouge (occupé) par position
     const fillRackPos = (rackId) => {
       const rack = racks[rackId];
       levelSel.innerHTML = "";
@@ -1640,25 +1815,65 @@ class TigerTagCard extends HTMLElement {
 
       rackPosRow.style.display = "flex";
 
-      // Étages : 0 → level_count - 1 (ou level_count si 1-based selon le rack)
-      const nbLevels = rack.level_count ?? rack.level ?? 1;
+      // Construire un index d'occupation : {level: {position: uid}}
+      const occupied = {};
+      for (const sp of this._allSpools()) {
+        if (sp.rack_id !== rackId) continue;
+        if (sp.uid === s.uid || sp.uid === s.twin_uid) continue; // ignorer soi-même
+        const lv = sp.rack_level;
+        const po = sp.rack_position;
+        if (lv === null || lv === undefined || po === null || po === undefined) continue;
+        if (!occupied[lv]) occupied[lv] = {};
+        occupied[lv][po] = sp.uid;
+      }
+
+      // Niveau  : lettre  (0 → "A", 1 → "B" …)
+      // Position : chiffre (0 → "1", 1 → "2" …)
+      const levelLabel_human = i => String.fromCharCode(65 + i); // 0→A, 1→B …
+      const posLabel_human   = i => String(i + 1);               // 0→1, 1→2 …
+
+      // Slot actuel : mis à jour après chaque assignation via s (objet muté)
+      const getCurLevel = () => (s.rack_id === rackId) ? s.rack_level    : null;
+      const getCurPos   = () => (s.rack_id === rackId) ? s.rack_position : null;
+
+      const updatePosSel = (level) => {
+        posSel.innerHTML = "";
+        const nbPos = rack.position_count ?? 5;
+        for (let i = 0; i < nbPos; i++) {
+          const isCurrent  = (level === getCurLevel() && i === getCurPos()); // slot actuel de cette bobine
+          const isOccupied = !!(occupied[level] && occupied[level][i] !== undefined);
+          // Rouge si slot actuel OU occupé par une autre bobine
+          const dot = (isCurrent || isOccupied) ? "🔴" : "🟢";
+          const o   = document.createElement("option");
+          o.value   = i;
+          o.textContent = `${dot} ${posLabel_human(i)}`;
+          if (isCurrent) o.selected = true;
+          posSel.appendChild(o);
+        }
+        this._rackState.position = parseInt(posSel.value);
+        if (typeof _refreshAssignBtn === "function") _refreshAssignBtn();
+      };
+
+      // Niveaux : lettres A, B, C…
+      const nbLevels = rack.level_count ?? 1;
       for (let i = 0; i < nbLevels; i++) {
         const o = document.createElement("option");
         o.value = i;
-        o.textContent = String(i);
+        o.textContent = levelLabel_human(i);  // 0→A, 1→B …
         if (s.rack_level === i && s.rack_id === rackId) o.selected = true;
         levelSel.appendChild(o);
       }
 
-      // Positions : 1 → position_count
-      const nbPos = rack.position_count ?? rack.position ?? 5;
-      for (let i = 1; i <= nbPos; i++) {
-        const o = document.createElement("option");
-        o.value = i - 1;
-        o.textContent = String(i - 1);
-        if (s.rack_position === (i - 1) && s.rack_id === rackId) o.selected = true;
-        posSel.appendChild(o);
-      }
+      // Init positions selon niveau sélectionné
+      const initLevel = s.rack_id === rackId && s.rack_level !== null ? s.rack_level : parseInt(levelSel.value);
+      updatePosSel(initLevel);
+
+      // Recalculer les positions quand le niveau change
+      levelSel.addEventListener("change", e => {
+        const lv = parseInt(e.target.value);
+        this._rackState.level = lv;
+        updatePosSel(lv);
+      });
 
       // Mettre à jour l'état local
       this._rackState.level    = parseInt(levelSel.value);
@@ -1669,6 +1884,8 @@ class TigerTagCard extends HTMLElement {
     const initRackId = s.rack_id || "";
     fillRackPos(initRackId);
     if (!initRackId) rackPosRow.style.display = "none";
+    // _refreshAssignBtn sera défini juste après — on l'appellera via un timer micro
+    // pour être sûr que la closure est prête (ordre de déclaration JS)
 
     // Listeners rack
     rackSel.addEventListener("change", e => {
@@ -1679,9 +1896,7 @@ class TigerTagCard extends HTMLElement {
       _toggleAmsSec(!rid);
     });
 
-    levelSel.addEventListener("change", e => {
-      this._rackState.level = e.target.value !== "" ? parseInt(e.target.value) : null;
-    });
+    // Note : le listener levelSel est géré dans fillRackPos (met à jour posSel dynamiquement)
     posSel.addEventListener("change", e => {
       this._rackState.position = e.target.value !== "" ? parseInt(e.target.value) : null;
     });
@@ -1972,24 +2187,47 @@ class TigerTagCard extends HTMLElement {
     validateBtn.id = "tt-validate-btn";
     validateBtn.textContent = "Assigner";
 
-    // Désactivé si : rack sélectionné sans level/position ET pas de slot AMS sélectionné
     const isRackReady = () => rackSel.value && this._rackState.level !== null && this._rackState.position !== null;
     const isAmsReady  = () => !!this._amsState.tray;
 
-    validateBtn.disabled = !(isRackReady() || isAmsReady());
-    validateBtn.style.opacity = validateBtn.disabled ? "0.4" : "1";
-    validateBtn.style.cursor  = validateBtn.disabled ? "default" : "pointer";
+    // Indique si le slot rack actuellement sélectionné est occupé par une autre bobine
+    const isSlotOccupied = () => {
+      if (!isRackReady()) return false;
+      return !!this._getSlotOccupant(
+        this._rackState.rack_id,
+        this._rackState.level,
+        this._rackState.position,
+        s.uid
+      );
+    };
 
-    // Mettre à jour l'état du bouton quand rack/level/position changent
-    const refreshBtn = () => {
-      const ok = isRackReady() || isAmsReady();
-      validateBtn.disabled     = !ok;
+    // Mise à jour visuelle du bouton Assigner selon disponibilité du slot
+    _refreshAssignBtn = () => {
+      const ok       = isRackReady() || isAmsReady();
+      const occupied = isRackReady() && isSlotOccupied();
+      validateBtn.disabled      = !ok;
       validateBtn.style.opacity = ok ? "1" : "0.4";
       validateBtn.style.cursor  = ok ? "pointer" : "default";
+      if (occupied) {
+        // Slot pris : bouton orange avec avertissement
+        validateBtn.textContent       = "⚠️ Assigner (remplacer)";
+        validateBtn.style.background  = "var(--warning-color, #f4a100)";
+        validateBtn.style.color       = "#fff";
+        validateBtn.style.borderColor = "var(--warning-color, #f4a100)";
+      } else {
+        validateBtn.textContent       = "Assigner";
+        validateBtn.style.background  = "";
+        validateBtn.style.color       = "";
+        validateBtn.style.borderColor = "";
+      }
     };
-    rackSel.addEventListener("change",   refreshBtn);
-    levelSel.addEventListener("change",  refreshBtn);
-    posSel.addEventListener("change",    refreshBtn);
+
+    // Init couleur bouton immédiatement
+    _refreshAssignBtn();
+
+    rackSel.addEventListener("change",  _refreshAssignBtn);
+    levelSel.addEventListener("change", _refreshAssignBtn);
+    posSel.addEventListener("change",   _refreshAssignBtn);
 
     validateBtn.addEventListener("click", async () => {
       validateBtn.disabled = true;
@@ -2008,6 +2246,8 @@ class TigerTagCard extends HTMLElement {
           await this._setAms(s, this._amsState.tray);
         }
         validateBtn.textContent = "Assigné ✓";
+        // Mettre à jour les selects : ancien slot → vert, nouveau → rouge
+        fillRackPos(this._rackState.rack_id || "");
         setTimeout(() => { validateBtn.textContent = "Assigner"; }, 1800);
       } catch(e) {
         console.error("[TigerTagCard] assign:", e);

@@ -65,14 +65,22 @@ class TigerTagDataUpdateCoordinator(DataUpdateCoordinator):
                 self.client.refresh_token, self.client.id_token,
             )
         except Exception as err:
-            _LOGGER.warning("Refresh token échoué, re-auth : %s", err)
-            try:
-                await self.client.authenticate()
-                await self.storage.async_save_tokens(
-                    self.client.refresh_token, self.client.id_token,
+            _LOGGER.warning("Refresh token échoué : %s", err)
+            # Fallback email/password uniquement si un mot de passe est disponible
+            # (mode token sans password → pas de fallback possible)
+            if self.client._password:
+                try:
+                    await self.client.authenticate()
+                    await self.storage.async_save_tokens(
+                        self.client.refresh_token, self.client.id_token,
+                    )
+                except Exception as err2:
+                    _LOGGER.error("Re-authentification email/password échouée : %s", err2)
+            else:
+                _LOGGER.error(
+                    "Refresh token invalide et aucun mot de passe disponible — "
+                    "reconnexion manuelle requise."
                 )
-            except Exception as err2:
-                _LOGGER.error("Re-authentification échouée : %s", err2)
 
     # ── Raccourcis storage ──────────────────────────────────────────────────
 

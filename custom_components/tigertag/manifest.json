@@ -5,9 +5,7 @@
     "@Kenny3231"
   ],
   "config_flow": true,
-  "dependencies": [
-    "mqtt"
-  ],
+  "dependencies": [],
   "documentation": "https://github.com/Kenny3231/TigerTag",
   "issue_tracker": "https://github.com/Kenny3231/TigerTag/issues",
   "iot_class": "cloud_polling",

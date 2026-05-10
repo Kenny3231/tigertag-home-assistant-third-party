@@ -225,19 +225,17 @@ class TigerTagSpoolSensor(CoordinatorEntity[TigerTagDataUpdateCoordinator], Sens
         except (TypeError, ValueError):
             r = g = b = 0
 
-        # ── Rack : données du rack + position de la bobine dans le rack ─────
-        rack_id   = d.get("rack_id")
-        rack_data = self._get_rack(rack_id)
+        # ── Rack : uniquement l'emplacement de la bobine ────────────────────
+        # rack_name/level_count/position_count → StatsSensor uniquement
+        rack_id = d.get("rack_id") or None
 
-        # Position de la bobine dans le rack (champs sur la bobine elle-même)
-        spool_level    = d.get("level")     # étage où se trouve la bobine
-        spool_position = d.get("position")  # position dans l'étage
-
-        # Capacité du rack (champs sur le document rack)
-        rack_level_count    = rack_data.get("level_count")    if rack_data else None
-        rack_position_count = rack_data.get("position_count") if rack_data else None
-        rack_name           = rack_data.get("name")           if rack_data else None
-        rack_order          = rack_data.get("order")          if rack_data else None
+        # La position réelle est normalisée par get_inventory() dans
+        # spool_level / spool_position (depuis rack.level / rack.position)
+        # Les champs plats "level"/"position" sont les capacités du rack.
+        raw_level    = d.get("spool_level")
+        raw_position = d.get("spool_position")
+        spool_level    = int(raw_level)    if raw_level    is not None else None
+        spool_position = int(raw_position) if raw_position is not None else None
 
         # ── Construction des attributs ───────────────────────────────────────
         attrs: dict[str, Any] = {
@@ -314,30 +312,20 @@ class TigerTagSpoolSensor(CoordinatorEntity[TigerTagDataUpdateCoordinator], Sens
             # ── Emplacement AMS ──────────────────────────────────────────────
             "ams_location": coord.get_location(self._uid),
             # ── Rack : emplacement de la bobine ──────────────────────────────
-            # ID Firestore du rack
-            "rack_id":       rack_id,
-            # Nom affiché du rack
-            "rack_name":     rack_name,
-            # Ordre d'affichage du rack
-            "rack_order":    rack_order,
-            # Position de la bobine dans le rack
-            "rack_level":    spool_level,    # étage (0-based)
-            "rack_position": spool_position, # position dans l'étage (1-based selon Firestore)
-            # Capacité totale du rack (pour construire la grille dans la carte JS)
-            "rack_level_count":    rack_level_count,    # nombre d'étages disponibles
-            "rack_position_count": rack_position_count, # nombre de positions par étage
+            "rack_id":       rack_id,       # ID Firestore du rack (None si pas de rack)
+            "rack_level":    spool_level,   # étage (0-based, 0 est valide)
+            "rack_position": spool_position, # position dans l'étage (0-based, 0 est valide)
         }
 
-        # Filtre : exclure None, et les dicts non sérialisables par HA,
-        # mais conserver les listes de scalaires (online_color_list)
-        return {
-            k: v
-            for k, v in attrs.items()
-            if v is not None
-            and not isinstance(v, dict)
-            or isinstance(v, list)
-            and all(not isinstance(i, dict) for i in v)
-        }
+        # Filtre : exclure None et les dicts bruts.
+        # IMPORTANT : 0 et False sont des valeurs valides (rack_level=0, etc.)
+        def _keep(v):
+            if v is None:              return False
+            if isinstance(v, dict):    return False
+            if isinstance(v, list):    return all(not isinstance(i, dict) for i in v)
+            return True
+
+        return {k: v for k, v in attrs.items() if _keep(v)}
 
 
 # ── Sensor statistiques ───────────────────────────────────────────────────────

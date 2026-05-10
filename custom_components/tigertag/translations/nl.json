@@ -2,26 +2,37 @@
   "config": {
     "step": {
       "user": {
-        "title": "TigerTag Verbinding",
-        "description": "Voer je TigerTag-inloggegevens in. Je vindt je API-sleutel in de TigerTag Studio app.",
+        "title": "TigerTag — Authenticatie",
+        "description": "Kies uw Firebase-authenticatiemethode.",
         "data": {
-          "email": "E-mailadres",
-          "api_key": "API-sleutel"
+          "auth_mode": "Authenticatiemodus"
         }
       },
-      "locations": {
-        "title": "Opslaglocaties",
-        "description": "Definieer je opslaglocaties gescheiden door komma's (bijv. {example}).",
+      "password": {
+        "title": "TigerTag — E-mail / Wachtwoord",
+        "description": "Voer uw TigerTag-inloggegevens in.",
         "data": {
-          "locations_raw": "Opslaglocaties"
+          "email": "E-mailadres",
+          "password": "Wachtwoord"
+        }
+      },
+      "token": {
+        "title": "TigerTag — Firebase-token",
+        "description": "Plak het token uit de [TigerTag-Token 1.0.0.exe](https://github.com/Kenny3231/TigerTag) app op GitHub.",
+        "data": {
+          "email": "E-mailadres (optioneel)",
+          "refresh_token": "Token"
+        },
+        "data_description": {
+          "email": "Laat leeg om de Firebase-UID als accountnaam te gebruiken."
         }
       }
     },
     "error": {
-      "invalid_auth": "Ongeldige API-sleutel of e-mailadres.",
-      "cannot_connect": "Kan geen verbinding maken met de TigerTag API.",
-      "no_locations": "Definieer ten minste één opslaglocatie.",
-      "unknown": "Onbekende fout. Controleer de logboeken voor meer details."
+      "invalid_auth": "Ongeldig e-mailadres of wachtwoord.",
+      "invalid_token": "Ongeldig of verlopen token.",
+      "cannot_connect": "Kan geen verbinding maken met Firebase.",
+      "unknown": "Onbekende fout. Controleer de logboeken."
     },
     "abort": {
       "already_configured": "Dit TigerTag-account is al geconfigureerd."
@@ -30,15 +41,17 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opslaglocaties bewerken",
-        "description": "Bewerk je opslaglocaties gescheiden door komma's (bijv. {example}).",
-        "data": {
-          "locations_raw": "Opslaglocaties"
-        }
+        "title": "TigerTag-opties",
+        "description": "Nog geen opties beschikbaar."
       }
-    },
-    "error": {
-      "no_locations": "Definieer ten minste één opslaglocatie."
+    }
+  },
+  "selector": {
+    "auth_mode": {
+      "options": {
+        "password": "E-mail / Wachtwoord",
+        "token": "Token (uit de app)"
+      }
     }
   }
 }

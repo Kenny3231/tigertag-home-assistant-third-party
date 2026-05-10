@@ -2,26 +2,37 @@
   "config": {
     "step": {
       "user": {
-        "title": "TigerTag Connection",
-        "description": "Enter your TigerTag credentials. Find your API key in the TigerTag Studio app.",
+        "title": "TigerTag — Authentication",
+        "description": "Choose your Firebase authentication method.",
         "data": {
-          "email": "Email address",
-          "api_key": "API Key"
+          "auth_mode": "Authentication mode"
         }
       },
-      "locations": {
-        "title": "Storage Locations",
-        "description": "Define your storage locations separated by commas (e.g. {example}).",
+      "password": {
+        "title": "TigerTag — Email / Password",
+        "description": "Enter your TigerTag account credentials.",
         "data": {
-          "locations_raw": "Storage locations"
+          "email": "Email address",
+          "password": "Password"
+        }
+      },
+      "token": {
+        "title": "TigerTag — Token",
+        "description": "Paste the Firebase refresh token from the [TigerTag-Token 1.0.0.exe](https://github.com/Kenny3231/TigerTag) application on GitHub.",
+        "data": {
+          "refresh_token": "Token",
+          "email": "Email address (optional)"
+        },
+        "data_description": {
+          "email": "Leave empty to use the Firebase UID as the account name."
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid API key or email address.",
-      "cannot_connect": "Unable to connect to the TigerTag API.",
-      "no_locations": "Please define at least one storage location.",
-      "unknown": "Unknown error. Check the logs for more details."
+      "invalid_auth": "Invalid email or password.",
+      "invalid_token": "Invalid or expired token — get a new one from the app.",
+      "cannot_connect": "Unable to connect to Firebase. Check your internet connection.",
+      "unknown": "Unknown error. Check the Home Assistant logs."
     },
     "abort": {
       "already_configured": "This TigerTag account is already configured."
@@ -30,21 +41,16 @@
   "options": {
     "step": {
       "init": {
-        "title": "Edit Storage Locations",
-        "description": "Edit your storage locations separated by commas (e.g. {example}).",
-        "data": {
-          "locations_raw": "Storage locations"
-        }
+        "title": "TigerTag Options",
+        "description": "No options available yet."
       }
-    },
-    "error": {
-      "no_locations": "Please define at least one storage location."
     }
   },
-  "entity": {
-    "sensor": {
-      "tigertag_stats": {
-        "name": "TigerTag Statistics"
+  "selector": {
+    "auth_mode": {
+      "options": {
+        "password": "Email / Password",
+        "token": "Token"
       }
     }
   }

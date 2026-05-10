@@ -181,9 +181,9 @@ def _make_set_rack_handler(hass: HomeAssistant, entry_id: str):
                 if sp_uid == uid:
                     continue  # c'est la bobine qu'on déplace, pas un conflit
                 if (
-                    sp.get("rack_id")  == rack_id
-                    and sp.get("level")    == level
-                    and sp.get("position") == position
+                    sp.get("rack_id")       == rack_id
+                    and sp.get("spool_level")    == level
+                    and sp.get("spool_position") == position
                 ):
                     _LOGGER.info(
                         "Slot (%s, étage=%d, pos=%d) occupé par %s → libération",

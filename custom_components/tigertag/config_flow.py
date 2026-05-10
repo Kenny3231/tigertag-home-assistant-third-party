@@ -1,4 +1,4 @@
-"""Config flow pour TigerTag — Email/Password ou Google OAuth (refresh token)."""
+"""Config flow pour TigerTag — Email/Password ou Firebase Refresh Token."""
 import logging
 from typing import Any
 
@@ -7,6 +7,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import selector
 
 from .api import (
     TigerTagApiClient,
@@ -19,21 +20,29 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Schémas des deux modes d'auth
-STEP_AUTH_MODE_SCHEMA = vol.Schema({
-    vol.Required("auth_mode", default="password"): vol.In(["password", "token"]),
+# ── Schémas ────────────────────────────────────────────────────────────────
+
+STEP_USER_SCHEMA = vol.Schema({
+    vol.Required("auth_mode", default="password"): selector.selector({
+        "select": {
+            "options": ["password", "token"],
+            "translation_key": "auth_mode",
+        }
+    }),
 })
 
 STEP_PASSWORD_SCHEMA = vol.Schema({
-    vol.Required(CONF_EMAIL):    str,
-    vol.Required(CONF_PASSWORD): str,
+    vol.Required(CONF_EMAIL):    selector.selector({"text": {"type": "email"}}),
+    vol.Required(CONF_PASSWORD): selector.selector({"text": {"type": "password"}}),
 })
 
 STEP_TOKEN_SCHEMA = vol.Schema({
-    vol.Required(CONF_EMAIL):         str,
-    vol.Required("refresh_token"):    str,
+    vol.Optional(CONF_EMAIL, default=""): selector.selector({"text": {"type": "email"}}),
+    vol.Required("refresh_token"): selector.selector({"text": {"multiline": True}}),
 })
 
+
+# ── Helpers de validation ───────────────────────────────────────────────────
 
 async def _validate_password(hass, data: dict[str, Any]) -> tuple[str, str, str]:
     """Valide email/password. Retourne (title, firebase_uid, refresh_token)."""
@@ -49,44 +58,55 @@ async def _validate_password(hass, data: dict[str, Any]) -> tuple[str, str, str]
 
 async def _validate_token(hass, data: dict[str, Any]) -> tuple[str, str, str]:
     """
-    Valide un refresh token Firebase (ex: obtenu depuis Google OAuth).
+    Valide un refresh token Firebase.
     Retourne (title, firebase_uid, refresh_token).
+    L'email est optionnel — le firebase_uid est toujours récupéré depuis le token.
     """
     session = async_get_clientsession(hass)
+    email   = data.get(CONF_EMAIL, "").strip()
     client  = TigerTagApiClient(
-        email=data[CONF_EMAIL],
+        email=email,
         password="",
         session=session,
         refresh_token=data["refresh_token"],
     )
-    # Utilise le refresh token pour obtenir un id_token valide
     await client.refresh_id_token()
-    return f"TigerTag ({data[CONF_EMAIL]})", client.firebase_uid, client.refresh_token
+    label = email if email else client.firebase_uid
+    return f"TigerTag ({label})", client.firebase_uid, client.refresh_token
 
+
+# ── Config Flow ─────────────────────────────────────────────────────────────
 
 class TigerTagConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """
-    Flux de configuration : authentification Email / Mot de passe TigerTag.
-    """
+    """Config flow TigerTag — deux modes d'auth."""
 
     VERSION = 2
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._data:  dict[str, Any] = {}
         self._title: str = ""
 
-    # ── Étape unique : Email + Password ─────────────────────────────────────
+    # ── Étape 1 : choix du mode ─────────────────────────────────────────────
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Redirige directement vers le formulaire email/password."""
-        return await self.async_step_password(user_input)
+        if user_input is not None:
+            if user_input["auth_mode"] == "token":
+                return await self.async_step_token(None)
+            return await self.async_step_password(None)
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=STEP_USER_SCHEMA,
+            errors={},
+        )
 
     # ── Étape 2a : Email + Password ─────────────────────────────────────────
     async def async_step_password(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         errors: dict[str, str] = {}
+
         if user_input is not None:
             try:
                 self._title, firebase_uid, refresh_token = await _validate_password(
@@ -100,13 +120,18 @@ class TigerTagConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Erreur validation TigerTag email/password")
                 errors["base"] = "unknown"
             else:
-                await self.async_set_unique_id(user_input[CONF_EMAIL])
+                await self.async_set_unique_id(firebase_uid)
                 self._abort_if_unique_id_configured()
-                self._data.update(user_input)
-                self._data[CONF_FIREBASE_UID]  = firebase_uid
-                self._data["_refresh_token"]   = refresh_token
-                self._data["_auth_mode"]       = "password"
-                return self.async_create_entry(title=self._title, data=self._data)
+                return self.async_create_entry(
+                    title=self._title,
+                    data={
+                        CONF_EMAIL:         user_input[CONF_EMAIL],
+                        CONF_PASSWORD:      user_input[CONF_PASSWORD],
+                        CONF_FIREBASE_UID:  firebase_uid,
+                        "_refresh_token":   refresh_token,
+                        "_auth_mode":       "password",
+                    },
+                )
 
         return self.async_show_form(
             step_id="password",
@@ -114,11 +139,12 @@ class TigerTagConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    # ── Étape 2b : Refresh Token Google ─────────────────────────────────────
+    # ── Étape 2b : Refresh Token ─────────────────────────────────────────────
     async def async_step_token(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         errors: dict[str, str] = {}
+
         if user_input is not None:
             try:
                 self._title, firebase_uid, refresh_token = await _validate_token(
@@ -132,28 +158,26 @@ class TigerTagConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Erreur validation TigerTag refresh token")
                 errors["base"] = "unknown"
             else:
-                await self.async_set_unique_id(user_input[CONF_EMAIL])
+                await self.async_set_unique_id(firebase_uid)
                 self._abort_if_unique_id_configured()
-                self._data[CONF_EMAIL]         = user_input[CONF_EMAIL]
-                self._data[CONF_FIREBASE_UID]  = firebase_uid
-                self._data["_refresh_token"]   = refresh_token
-                self._data["_auth_mode"]       = "token"
-                return self.async_create_entry(title=self._title, data=self._data)
+                return self.async_create_entry(
+                    title=self._title,
+                    data={
+                        CONF_EMAIL:         user_input.get(CONF_EMAIL, ""),
+                        CONF_PASSWORD:      "",
+                        CONF_FIREBASE_UID:  firebase_uid,
+                        "_refresh_token":   refresh_token,
+                        "_auth_mode":       "token",
+                    },
+                )
 
         return self.async_show_form(
             step_id="token",
             data_schema=STEP_TOKEN_SCHEMA,
             errors=errors,
-            description_placeholders={
-                "help": (
-                    "Ouvre l'app TigerTag Studio Manager → F12 → Application → "
-                    "IndexedDB → firebaseLocalStorageDb → firebaseLocalStorage → "
-                    "copie la valeur 'refreshToken'."
-                )
-            },
         )
 
-    # ── Options flow ────────────────────────────────────────────────────────
+    # ── Options flow ─────────────────────────────────────────────────────────
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
@@ -161,9 +185,9 @@ class TigerTagConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class TigerTagOptionsFlow(config_entries.OptionsFlow):
-    """Modification des lieux de stockage après installation."""
+    """Options flow TigerTag (vide pour l'instant)."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry) -> None:
         self._entry = config_entry
 
     async def async_step_init(

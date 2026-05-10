@@ -106,10 +106,12 @@ class TigerTagApiClient:
         self._api_key       = ""
         self._token_expires = 0.0  # timestamp epoch
 
-        # Mode OAuth : refresh token fourni sans mot de passe
-        self._oauth_mode = bool(refresh_token and not password)
-
     # ── Propriétés publiques ────────────────────────────────────────────────
+
+    @property
+    def oauth_mode(self) -> bool:
+        """True si mode token sans password — calculé dynamiquement."""
+        return bool(self._refresh_token and not self._password)
 
     @property
     def firebase_uid(self) -> str:
@@ -280,7 +282,7 @@ class TigerTagApiClient:
             try:
                 await self.refresh_id_token()
             except TigerTagApiClientAuthenticationError:
-                if self._oauth_mode:
+                if self.oauth_mode:
                     raise  # Pas de fallback possible sans navigateur
                 _LOGGER.warning("Refresh échoué, re-authentification email/password…")
                 await self.authenticate()
@@ -340,7 +342,53 @@ class TigerTagApiClient:
             if twin_raw:
                 fields["twin_tag_uid"] = str(twin_raw).upper()
 
+            # ── Source de vérité rack : uniquement l'objet imbriqué rack.* ───
+            # Les champs plats rack_id / level / position / _rackId / _rackLevel
+            # / _rackPos sont des reliquats d'anciennes versions — ignorés.
+            rack_obj = fields.get("rack")
+            if isinstance(rack_obj, dict) and rack_obj.get("id"):
+                fields["rack_id"]        = rack_obj["id"]
+                fields["spool_level"]    = rack_obj.get("level")
+                fields["spool_position"] = rack_obj.get("position")
+            else:
+                fields["rack_id"]        = None
+                fields["spool_level"]    = None
+                fields["spool_position"] = None
+
             inventory[rfid_uid] = fields
+
+        # ── Sync twin rack en mémoire + correction Firestore différée ────────
+        twins_to_fix: list[tuple[str, str, int, int]] = []
+        for uid, spool in inventory.items():
+            twin_uid = spool.get("twin_tag_uid")
+            if not twin_uid or twin_uid not in inventory:
+                continue
+            twin = inventory[twin_uid]
+            if spool.get("rack_id") and not twin.get("rack_id"):
+                twin["rack_id"]        = spool["rack_id"]
+                twin["spool_level"]    = spool.get("spool_level")
+                twin["spool_position"] = spool.get("spool_position")
+                _LOGGER.debug(
+                    "Twin %s aligné sur rack %s (level=%s pos=%s)",
+                    twin_uid, spool["rack_id"],
+                    spool.get("spool_level"), spool.get("spool_position"),
+                )
+                r = spool["rack_id"]
+                l = spool.get("spool_level")
+                p = spool.get("spool_position")
+                if r is not None and l is not None and p is not None:
+                    twins_to_fix.append((twin_uid, r, int(l), int(p)))
+
+        if twins_to_fix:
+            import asyncio
+            async def _fix_twins():
+                for tw_uid, r, l, p in twins_to_fix:
+                    try:
+                        await self.set_spool_rack(tw_uid, rack_id=r, level=l, position=p)
+                        _LOGGER.info("Firestore twin corrigé : %s rack=%s l=%d p=%d", tw_uid, r, l, p)
+                    except Exception as e:
+                        _LOGGER.warning("Correction twin %s échouée : %s", tw_uid, e)
+            asyncio.ensure_future(_fix_twins())
 
         _LOGGER.debug("%d bobine(s) active(s) chargées depuis Firestore", len(inventory))
         return inventory
@@ -405,25 +453,43 @@ class TigerTagApiClient:
         now_ms   = int(datetime.now().timestamp() * 1000)
         spool_id = uid.upper()
 
-        # Champs à inclure dans le masque de mise à jour
-        mask_fields = ["rack_id", "last_update", "level", "position"]
-        mask = "&".join(f"updateMask.fieldPaths={f}" for f in mask_fields)
-        url  = self._fs_url(f"users/{self._firebase_uid}/inventory/{spool_id}") + f"?{mask}"
-
-        # Encoder les valeurs — None → nullValue (efface le champ Firestore)
         def _fs_nullable_int(val: int | None) -> dict:
             return {"nullValue": None} if val is None else _to_fs_int(val)
 
-        fields: dict = {
-            "rack_id": (
-                {"nullValue": None}
-                if rack_id is None
-                else {"stringValue": rack_id}
-            ),
-            "last_update": _to_fs_int(now_ms),
-            "level":    _fs_nullable_int(level),
-            "position": _fs_nullable_int(position),
-        }
+        # Structure Firestore : objet imbriqué rack.{id, level, position}
+        # rack_id plat écrit aussi pour compatibilité app TigerTag Studio.
+        if rack_id is None:
+            mask = (
+                "updateMask.fieldPaths=rack"
+                "&updateMask.fieldPaths=rack_id"
+                "&updateMask.fieldPaths=last_update"
+            )
+            url = self._fs_url(f"users/{self._firebase_uid}/inventory/{spool_id}") + f"?{mask}"
+            fields: dict = {
+                "rack":        {"nullValue": None},
+                "rack_id":     {"nullValue": None},
+                "last_update": _to_fs_int(now_ms),
+            }
+        else:
+            mask = (
+                "updateMask.fieldPaths=rack"
+                "&updateMask.fieldPaths=rack_id"
+                "&updateMask.fieldPaths=last_update"
+            )
+            url = self._fs_url(f"users/{self._firebase_uid}/inventory/{spool_id}") + f"?{mask}"
+            fields = {
+                "rack": {
+                    "mapValue": {
+                        "fields": {
+                            "id":       {"stringValue": rack_id},
+                            "level":    _fs_nullable_int(level),
+                            "position": _fs_nullable_int(position),
+                        }
+                    }
+                },
+                "rack_id":     {"stringValue": rack_id},
+                "last_update": _to_fs_int(now_ms),
+            }
 
         await self._request("PATCH", url, {"fields": fields})
         _LOGGER.debug(
